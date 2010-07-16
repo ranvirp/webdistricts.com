@@ -1,0 +1,24 @@
+Description:
+------------
+The code included in this package helps in converting some of the
+Indian Language HTML pages from proprietary encodings to 
+standard UTF8 encoding.
+
+
+Requirements:
+-------------
+PHP-5
+
+Suggestions:
+------------
+The users should have unicode fonts for each language and Indic enabled 
+browser to view the Indian Language Characters properly.
+
+Some of the unicode fonts for different languages,
+
+Kannada   - Kedage
+Malayalam - Anjalioldlipi
+Tamil     - TSCu_Paranar
+Telugu    - Pothana2000
+Hindi, Marathi etc.  - Gargi
+(for Devanagari scripts)

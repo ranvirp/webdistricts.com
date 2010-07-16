@@ -1,0 +1,22 @@
+Basic Installation
+==================
+1. Uncompress the package.
+
+2.a. For web based usage, put the contents into your webserver's home directory
+or one of its subdirectories. Then edit the file config.php5 and set the value 
+for the variable $server as the URL to the unicode conversion gateway directory.
+
+eg.,
+    $server = "http://<domain_name>/<directory_name>";
+
+2.b. For command line usage, cd into the created folder and use the following 
+command,
+
+Usage:
+    php5 cmd_convert.php5 [website_name] < input_file_name > output_file_name
+
+The php script cmd_convert.php5 will take input from stdin and send output to
+stdout. The optional parameter website_name will be used to identify the default
+font to be used for this file. website_name value will be used as the index
+for the $supported_fonts array and like wise arrays defined in the file 
+config.php5

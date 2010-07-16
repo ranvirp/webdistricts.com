@@ -1,0 +1,29 @@
+<?php
+// $Id: excel_import.install,v 0.0 2009/10/23 05:30:29 drumm Exp $
+
+/**
+ * Implementation of hook_install().
+ */
+function excel_import_install() {
+  switch ($GLOBALS['db_type']) {
+    case 'mysql':
+    case 'mysqli':
+      db_query("CREATE TABLE excel_import (
+		id INT( 5 ) NOT NULL AUTO_INCREMENT PRIMARY KEY ,
+		type VARCHAR( 100 ) NOT NULL ,
+		mapping LONGTEXT NOT NULL 
+	  ) ENGINE = MYISAM CHARACTER SET utf8 COLLATE utf8_unicode_ci");
+
+
+      break;
+    
+  }
+}
+
+/**
+ * Implementation of hook_uninstall().
+ */
+function excel_import_uninstall() {
+  db_query('DROP TABLE {excel_import}');
+  }
+?>

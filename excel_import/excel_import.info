@@ -1,0 +1,5 @@
+; $Id: excel_import.info,v 0.0 2009/10/18 07:06:23 ranvirp Exp $
+name = "Excel Import"
+description = "Import content from a excel file"
+package = "Test"
+core=6.x

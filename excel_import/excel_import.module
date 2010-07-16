@@ -1,0 +1,1540 @@
+<?php
+	// $Id: excel_import.module,v 0.0 2009/10/15 09:37:58 ranvirp Exp $
+
+	/*************************************
+	Desired functionalities are as follows:
+	1. Show the available formats saved for the content type with a select radio button
+	2. Also have a link for entering a new format
+	3. Have a select radio before each of the formats
+	4. A field for uploading the file
+	5. Check if the user has permission to create the node.??
+	6. Check if a unique field has been set up for the module..if not then deny importing
+
+	*************************************/
+	/*
+	
+	Strategy :
+	  1. excel_import_task is cck type: fields are nid, file, row_begin, row_end, nodetype, list of nids created, status
+	  
+	  2.excel_type_formats : nid, mapping, type
+	  
+	  TODOs:
+	  
+	  1. A page to display all excel import tasks with a link to undo the import or complete the import..we can load all nodes of type excel_import_tasks with links..(simple)
+	  
+	  2. Incorporate use of no of sheets in the converned function
+	  
+	  3. A page to edit format to ensure fast import of files.
+	  
+	  4. Allow use of existing files for import
+	  5. Add required fields to content types
+	  
+	
+	*/
+function excel_import_perm() {
+return array('manage excel imports');
+}
+	function excel_import_menu() {
+	$links = array();
+
+		$links['excel_import/add_format/%'] = array(
+		
+		  'title' => t('Define formats for import from excel file'),
+		  'description' => t('Create formats for import from excel file'),
+		  'page callback' => 'excel_import_create_formats',
+		 'page arguments'=>array(2),
+		  // 'type' => MENU_CALLBACK,
+		  // 'access callback'=>TRUE,
+		 'access callback' => 'user_access',
+		 'access arguments'=>array('manage excel imports'),
+		);
+		$links['excel_import/addexcelfile/%'] = array(
+		  
+		  'page callback' => 'excel_import_addexcelfile',
+		  'page arguments'=>array(2),
+		  'title' => t('Add excel file'),
+		  //'type' => MENU_CALLBACK,
+		  'access callback' => 'user_access',
+		 'access arguments'=>array('manage excel imports'),
+		);
+		$links['excel_import/importpreview/%'] = array(
+		  
+		  'page callback' => 'drupal_get_form',
+		  'page arguments'=>array('excel_import_multiple_sheets_form',2),
+		  'title' => t('Preview the imported rows'),
+		  //'type' => MENU_CALLBACK,
+		  //'access callback'=>TRUE,
+		  'access callback' => 'user_access',
+		 'access arguments'=>array('manage excel imports'),
+		);
+		$links['excel_import/importfast/%'] = array(
+		  
+		  'page callback' => 'drupal_get_form',
+		  'page arguments'=>array('excel_import_multiple_sheets_fast',2),
+		  'title' => t('Fast import without preview'),
+		  //'type' => MENU_CALLBACK,
+		  //'access callback'=>TRUE,
+		  'file' => 'excel_import.inc',
+		  'access callback' => 'user_access',
+		 'access arguments'=>array('manage excel imports'),
+		);
+		$links['excel_import/importpreviewmultsheets/%'] = array(
+		  
+		  'page callback' => 'drupal_get_form',
+		  'page arguments'=>array('excel_import_multiple_sheets_form',2),
+		  'title' => t('Preview the imported rows'),
+		  //'type' => MENU_CALLBACK,
+		  //'access callback'=>TRUE,
+		  'access callback' => 'user_access',
+		 'access arguments'=>array('manage excel imports'),
+		);
+		$links['excel_import/manageimports/%'] = array(
+		  
+		  'page callback' => 'excel_import_manage_imports',
+		  'page arguments'=>array(2),
+		  'title' => t('Manage all imports'),
+		  //'type' => MENU_CALLBACK,
+		  //'access callback'=>TRUE,
+		  'access callback' => 'user_access',
+		 'access arguments'=>array('manage excel imports'),
+		);
+		$links['excel_import/admin'] = array(
+		  
+		  'page callback' => 'excel_import_admin_imports',
+		  //'page arguments'=>array(2),
+		  'title' => t('Import from excel file'),
+		  //'type' => MENU_CALLBACK,
+		  //'access callback'=>TRUE,
+		  'access callback' => 'user_access',
+		 'access arguments'=>array('manage excel imports'),
+		);
+		$links['excel_import/importednodesview/%'] = array(
+		  
+		  'page callback' => 'excel_import_importednodes_view',
+		  'page arguments'=>array(2),
+		  'title' => t('Imported nodes'),
+		  //'type' => MENU_CALLBACK,
+		 // 'access callback'=>TRUE,
+		'access callback' => 'user_access',
+		 'access arguments'=>array('manage excel imports'),
+		);
+		$links['excel_import/undo/%'] = array(
+		  
+		  'page callback' => 'excel_import_undo',
+		  'page arguments'=>array(2),
+		  'title' => t('Undo imports'),
+		  //'type' => MENU_CALLBACK,
+		  //'access callback'=>TRUE,
+		 'access callback' => 'user_access',
+		 'access arguments'=>array('manage excel imports'),
+		);
+		
+	  return $links;
+
+	}
+	function excel_import_addexcelfile ($type) {
+	//$_SESSION['type']=$type;
+		
+	$_SESSION['type']=array($type);
+	return drupal_get_form('excel_import_format_selectfileform',$type);
+	
+	}
+	
+	function excel_import_create_formats ($type) {
+      $_SESSION['type']=array($type);
+	  return drupal_get_form('_excel_import_create_formats',$type);
+
+	}
+
+	/*
+
+	Function to create form for formats
+	*/
+		
+function _excel_import_create_formats(&$form_state,$type) {
+global $user;
+
+			$types = node_get_types();
+		
+			if (isset($types[$type]) && node_access('create', $type)) {
+			$node = array('uid' => $user->uid, 'name' => (isset($user->name) ? $user->name : ''), 'type' => $type, 'language' => '');
+			$info = _content_type_info();
+ 
+	   if (!empty($type) ) {
+			$fields = $info['content types'][$type]['fields']; 
+			}
+			if (empty($fields)) {
+			drupal_set_message('unexpected error');//debug
+			//debug
+			}
+			foreach ($fields as $field_name=>$field_namearray) {
+			//if ($field_namearray['type_name']==$type) {
+			 #$field=content_fields($field_name['field_name'],$field_name['type_name']);
+			 $label=$field_namearray['widget']['label'];
+			 
+			$form[] = array(
+			'#type'=>'textfield',
+			'#id'=>$field_name,
+			//'#title'=>$label,
+			'#title'=>$field_name,
+			'#size' => 4,
+			);
+			}
+	
+	$form['submit'] = array (
+	'#type'=>'submit',
+	'#value' =>'Submit'
+	);
+	}
+	$form['helptext']=array(
+	'#value'=>'Enter column number of excel file against the fields. Enter a non-numeric value to have a constant value across all rows.',
+	);
+	return $form;	}
+
+	
+	
+	function _excel_import_create_formats_submit($form,&$form_state) {
+
+	//$form=drupal_retrieve_form($form_id,arg(4));
+	$headers = array(t('Key'), t('Value'));
+	$fields = array();
+	$values=array();
+	$type=arg(2);
+	$info = _content_type_info();
+	
+	   if (!empty($info) ) {
+	 $fieldss = $info['content types'][$type]['fields'];	}
+	 
+	foreach ($form_state['values'] as $key => $value) {
+	  #  $row = array();
+	    if (isset($fieldss[$form[$key]['#id']] )){
+		$fields[$form[$key]['#id']]=check_plain($value);
+		$values[]= check_plain($value);}
+	}
+	// $type=arg(4);
+	 $fields['type']=$type;
+	 #variable_set($type.'_format_excel',serialize($fields));
+	 db_query("insert into {excel_import} (type,mapping) values('%s','%s')",$type,serialize($fields));
+	 $form_state['redirect'] = 'excel_import/addexcelfile/'.$type;
+	 }
+	 
+
+function excel_import_format_selectfileform(&$form_state,$type) {
+	//////dsm($type);
+	if(empty($type)) {
+		////dsm($form_state);
+	}
+	$result = db_query("select id,type,mapping from {excel_import} where type='%s'",$type);
+	while ($res=db_fetch_object($result)) {
+		$radio_options[$res->id]='';
+	}
+	
+	include_once 'modules/node/node.pages.inc';
+	$form_state = array('storage' => NULL, 'submitted' => FALSE);
+	if ((arg(2)=='edit') && (arg(0)=='node')) {
+		$nidtemp=arg(1);
+		$nodetemp=node_load($nidtemp);
+		if ($nodetemp->type=='excel_import_task') {
+		$excel_import_node =$nodetemp;
+		}
+	} else {
+		$excel_import_node = new stdClass();}
+	$excel_import_node->type='excel_import_task';
+	$form_id='excel_import_task_node_form';
+	$form=drupal_retrieve_form('excel_import_task_node_form',$form_state,$excel_import_node);
+	
+	
+	drupal_prepare_form($form_id, $form, $form_state);
+    
+	$form['format']=array(
+
+	'#type' => 'radios',
+	'#title' => t(''),
+	'#options' => $radio_options,
+
+	);
+	
+	$form['font_conv'] = array(
+	'#type'=>'select',
+	'#id'=>'font_conv',
+	'#title'=>'Convert font',
+	 '#options'=>array('No','Yes'),
+	);
+	////////dsm($form);
+	$form['field_importmapping']['#access']=FALSE;
+	$form['field_excelimportlistnids']['#access']=FALSE;
+	$form['field_excelimportstatus']['#access']=FALSE;
+	$form['field_excelimportmappingtable']['#access']=FALSE;
+	$form['field_excelimportcurrentrow']['#access']=FALSE;
+	$form['field_type']['#access']=FALSE;
+	
+	unset($form['book']);
+	unset($form['menu']);
+	unset($form['path']);
+	
+	unset($form['print']);
+	
+	
+$form['type']=array('#type'=>'value','#value'=>$type);
+	//////dsm($form);
+	return $form;
+
+	}
+
+function excel_import_form_alter($form) {
+	#//////dsm($form);
+	 if ($form['#token']=='excel_import_task_node_form') {
+	  $args=func_get_args();
+	 // ////dsm(arg(2));
+
+      $form['#id']='excel_import_format_selectfileform';
+	  $form['#theme']='excel_import_format_selectfileform';
+	  unset ($form['submit']['#submit']);
+	  unset($form['#submit']);
+	unset($form['#validate']);
+	
+      $form['#submit'][]=$form['submit']['#submit'][]='excel_import_format_selectfileform_submit';
+      $form['submit']['#weight']=100;
+      unset($form['buttons']['submit']['#submit']);
+      $form['buttons']['submit']['#submit'][]='excel_import_format_selectfileform_submit';
+	  #$type=$args[0]['field_type'][0]['#default_value']['value'];
+	  $type=$_SESSION['type'][0];
+	  if (arg(2)=='edit') {
+		$node1=node_load(arg(1));
+		
+		$type=$node1->field_type[0]['value'];
+	  }
+	  //////dsm($_SESSION['type']);
+	  	   //////dsm($type);
+	  $result = db_query("select id,type,mapping from {excel_import} where type='%s'",$type);
+	  
+	  while ($res=db_fetch_object($result)) {
+		$radio_options[$res->id]='';
+	  }
+	
+	
+	$form['format']=array(
+
+	'#type' => 'radios',
+	'#title' => t(''),
+	'#options' => $radio_options,
+
+	);
+	
+	$form['type']=array('#type'=>'value','#value'=>$type);
+	$form['field_importmapping']['#access']=FALSE;
+	$form['field_excelimportlistnids']['#access']=FALSE;
+	$form['field_excelimportstatus']['#access']=FALSE;
+	$form['field_excelimportmappingtable']['#access']=FALSE;
+	$form['field_excelimportcurrentrow']['#access']=FALSE;
+	$form['field_type']['#access']=FALSE;
+	
+	unset($form['book']);
+	unset($form['menu']);
+	unset($form['path']);
+	
+	unset($form['print']);
+	unset($form['comment_settings']);
+	
+	
+	
+ //////dsm($form);
+ 
+ }
+} 
+	 
+function excel_import_format_selectfileform_submit($form,&$form_state) {
+ //http://www.dyn-web.com/code/scroll/vert.php
+ $args=func_get_args();
+ //////dsm($args);
+ $node= new stdClass();
+ $node->type='excel_import_task';
+ $node->field_excelrowbegin=$form_state['values']['field_excelrowbegin'];
+ $node->field_rowend=$form_state['values']['field_rowend'];
+ $node->field_excelimportfile=$form_state['values']['field_excelimportfile'];
+ $node->field_excelimportsheetno=$form_state['values']['field_excelimportsheetno'];
+ $node->field_excelimportrows=$form_state['values']['field_excelimportrows'];
+ 
+ $node->field_excelimportcurrentrow=$node->field_excelrowbegin;
+ #$formid=$_POST['format'];
+ $formid=$form_state['values']['format'];
+ ////////dsm($formid);
+ if (empty($formid)) {form_set_error(NULL,"select a format for import",FALSE);}
+ $result = db_query("select type,mapping from {excel_import} where id='%d'",$formid);
+ $res = db_fetch_object($result);
+ $mapping=$res->mapping;
+ //////dsm($mapping);
+ $node->field_importmapping=array(array('value'=>$mapping));
+ $type=$res->type;
+ $node->field_type=array(array('value'=>$type));
+ $array=unserialize( $mapping);
+foreach ($array as $key=>$value){
+ $header[]=$key;
+ $row[]=$value;
+}
+$rows[]=$row;
+//$mappingtable=theme('table',$header,$rows);
+//$node->field_excelimportmappingtable =array('value'=>$mappingtable);
+$node->field_excelimportstatus[]=array('value'=>0);
+ if (node_submit($node) ){
+ node_save($node);
+ }
+ $form_state['redirect']='excel_import/manageimports/'.$type;
+ #$form=drupal_get_form('excel_import_importform',$node->nid);
+ #_excelimport($node->nid);
+#return $form;
+}
+function excel_import_form(&$form_state,$nid) {
+#debug
+//module_load_include('inc', 'node_import', 'node_import');
+
+////dsm(node_import_list_files());
+//return "hi";
+#debug
+if (!user_access('manage excel imports')) {
+ return 'You cannot import from excel files';
+}
+include_once (dirname(__FILE__) . "/unigateway/Encoder/transformer.php5");
+$node=node_load($nid);
+$excelfiles=$node->field_excelimportfile[0]['filepath'];
+$excelfiles=realpath(".")."/".$excelfiles;
+
+require_once 'excel_reader2.php';
+$data = new Spreadsheet_Excel_Reader($excelfiles);
+
+$t = new Transformer();
+$outstr="ftyk ;kstuk";
+$fontface="kruti dev 010";
+
+//$outstr = $t->convert($outstr, $fontface);
+ 
+
+
+
+$row_begin=$node->field_excelrowbegin[0]['value'];
+$allrows=$node->field_excelimportrows[0]['value'];
+
+//new version 
+$matches=array();
+////dsm($allrows);
+preg_match_all("/\,?(\d+)(\-(\d+))?/",$allrows,$matches,PREG_SET_ORDER);
+////dsm($matches);
+$rownos=array();
+foreach ($matches as $match) {
+if(count($match) ==4) {//row1-row2
+  $row1= $match[1];
+  $row2=$match[3];
+  if ($row1>$row2) { $temp=$row2;$row2=$row1;$row1=$temp;} //swap
+  
+   for($i=$row1;$i<=$row2;$i++) {
+    //check if $i is already in array 
+	if (! in_array($i,$rownos) ) {
+	  $rownos[]=$i;
+	}
+   }
+}
+if (count($match)==2) {
+ if (!in_array($match[1],$rownos)) {
+   $rownos[]=$match[1];
+ }
+}
+
+}
+////dsm($rows);
+//return "hi";
+//new version
+$row_end=$node->field_rowend[0]['value'];
+$currentrow=$node->field_excelimportcurrentrow[0]['value'];
+$excelformat=unserialize($node->field_importmapping[0]['value']);
+//dpm($excelformat);
+$sheet_no=$node->field_excelimportsheetno[0]['value'];
+$status=$node->excelimportstatus[0]['value'];
+if ($status) { return "Import is already complete";};
+$types=$excelformat['type'];
+unset($excelformat['type']);
+
+$header[]='Row No';
+foreach ($excelformat as $key=>$value) {
+$header[]=$key;
+}
+
+//for($i=$currentrow;$i<=$row_end;$i++) {
+foreach($rownos as $i) {
+ 
+ 
+//return $data->dump();
+$rows[]=$i;
+foreach ($excelformat as $key=>$value) {
+	if (is_numeric($value)) {
+		$k=$data->val($i,$value,$sheet_no);
+		
+		if (($k=="'")||($k=="")) { }
+					else { 
+						
+						$k = htmlentities($k,ENT_NOQUOTES);
+						//print "<b>".$k."</b><br>";
+						$k=_excel_import_convertLatin1ToHtml($k);
+						//print "<b>".$k."</b><br>";
+						//$k=encode($k,"UTF-8");
+						//mb_convert_encoding($k,"ISO-8859-15");
+						//$k=bin2hex($k);
+						/*
+						$link = $data->hyperlink($row,$col,$sheet);
+						if ($link!='') {
+							$k = "<a href=\"$link\">$k</a>";
+						}
+						*/
+						//$k=convert_uudecode($k);
+					////dsm($k);
+			//$k=nl2br($k);
+
+						}
+				////dsm($data->val($i,$value,$sheet_no));
+		} 
+	else {
+		$k=$value;
+	}
+	$font=$data->font($i,$value,$sheet_no);
+	if (strtolower($font)==$fontface) {
+		$k=$t->convert($k,$font);
+	}
+	$rows[]=$k;
+	
+}
+#//////dsm($node);
+$rowss[]=$rows;
+$rows=array();
+$importedrows[]=$i;
+
+ }
+ 
+
+
+//dpm($j);
+#$x="<b>hi</b>";
+#print theme('page',$x);
+
+#$output.=theme('table',$header,$rowss);
+$form_state['storage'] = isset($form_state['storage']) ? $form_state['storage'] : array();
+  $form_state['values'] = isset($form_state['values']) ? $form_state['values'] : array();
+  $values = array_merge($form_state['storage'], $form_state['values']);
+$form_state['storage']['preview']=$rowss;
+$form_state['storage']['header']=$header;
+$form_state['storage']['importedrows']=$importedrows;
+$form_state['storage']['excel_import_task']=$node;
+
+
+
+$form=array();
+$form['submit']=array(
+'#type'=>'submit',
+'#value'=>'submit',
+);
+$form['#theme']='excel_import_preview';
+$form['#preview']=$rowss;
+$form['#headers']=$header;
+//////dsm($form_state);
+//////dsm($form);
+return $form;
+}
+function theme_excel_import_preview($form) {
+ $header=$form['#headers'];
+ $rowss=$form['#preview'];
+ $output="";
+ if ($rowss!=NULL){
+ $output.='<script>
+ $(document).ready(function() {
+  document.forms["excel-import-multiple-sheets-form"].submit();
+  });
+ </script>';
+ }
+ $output.=drupal_render($form['submit']);
+ $output.=theme('table',$header,$rowss);
+ $output.=drupal_render($form);
+ return $output;
+
+}
+function excel_import_form_submit($form,&$form_state) {
+ //////dsm($form_state);
+ $excel_import_task=$form_state['storage']['excel_import_task'];
+ foreach ($form_state['storage']['preview'] as $key=>$value) {
+	 $worksnode=new stdClass();
+	 $worksnode->type=$excel_import_task->field_type[0]['value'];
+	 global $user;
+	 $worksnode->uid=$user->uid;
+	 node_prepare($worksnode);
+	 
+  foreach ($value as $fieldindex=>$fieldvalue) {
+  if ($fieldindex==0) {continue;}
+	$field=$form_state['storage']['header'][$fieldindex];
+	
+  	$worksnode->$field=array(array('value'=>$fieldvalue));
+  }
+//  ////dsm($worksnode);
+  node_validate($worksnode);
+  if (!($errors=form_get_errors())) {
+  //$importednode=node_submit($worksnode);
+  node_save($worksnode);}
+   if ($worksnode->nid){
+	drupal_set_message("Node with nid:".$worksnode->nid." created.");
+	if ($excel_import_task->field_excelimportlistnids[0]['value']) {
+	$excel_import_task->field_excelimportlistnids[0]['value'] .= ",".$worksnode->nid;}
+	else {
+	$excel_import_task->field_excelimportlistnids[0]['value']=$worksnode->nid;
+	}
+	}
+  
+  }
+
+ $excel_import_task->field_excelimportstatus[0]['value']=1;
+ node_save($excel_import_task);
+ $form_state['redirect']='excel_import/viewimportednodes/'.$excel_import_task->nid;
+ $form_state['rebuild']=TRUE;
+ }
+/* 
+function excel_import_multiple_sheets_form_submit($form,&$form_state) {
+ 
+  $excel_import_task=$form_state['storage']['excel_import_task'];
+ foreach ($form_state['storage']['preview'] as $key=>$value) {
+	 $worksnode=new stdClass();
+	 $worksnode->type=$excel_import_task->field_type[0]['value'];
+	
+	 global $user;
+	 $worksnode->uid=$user->uid;
+	 
+  foreach ($value as $fieldindex=>$fieldvalue) {
+  if ($fieldindex==0) {next;}
+	$field=$form_state['storage']['header'][$fieldindex];
+	
+  	$worksnode->$field=array(array('value'=>$fieldvalue));
+  }
+//  ////dsm($worksnode);
+  node_validate($worksnode);
+  if (!($errors=form_get_errors())) {
+  //$importednode=node_submit($worksnode);
+  node_save($worksnode);}
+   if ($worksnode->nid){
+	drupal_set_message("Node with nid:".$worksnode->nid." created.");
+	if ($excel_import_task->field_excelimportlistnids[0]['value']) {
+	$excel_import_task->field_excelimportlistnids[0]['value'] .= ",".$worksnode->nid;}
+	else {
+	$excel_import_task->field_excelimportlistnids[0]['value']=$worksnode->nid;
+	}
+	}
+  
+  }
+
+ $excel_import_task->field_excelimportstatus[0]['value']=1;
+ node_save($excel_import_task);
+ #$form_state['redirect']='excel_import/viewimportednodes/'.$excel_import_task->nid;
+ #$form_state['rebuild']=TRUE;
+ return "hi";
+ }
+*/
+function excel_import_importednodes_view($nid) {
+$excel_import_task=node_load($nid);
+//////dsm($excel_import_task);
+$importmapping=$excel_import_task->field_importmapping[0]['value'];
+$mapping=unserialize($importmapping);
+$nidslist=explode(',',$excel_import_task->field_excelimportlistnids[0]['value']);
+if ($nidslist[0]==NULL){$nidslist[0]=$excel_import_task->field_excelimportlistnids[0]['value'];}
+//////dsm($mapping);
+foreach ($mapping as $key=>$value){
+  $header[]=$key;
+ }
+ //////dsm($nidslist);
+foreach ($nidslist as $nids) {
+$node=node_load($nids);
+ foreach ($mapping as $key=>$value){
+  $x=$node->$key;
+  foreach ($x as $l=>$m){
+  $row[]=$m['value'];
+  }
+  
+  }
+  $rows[]=$row;
+  $row=array();
+ 
+}
+//return "hi";
+return theme('table',$header,$rows);
+
+}
+function excel_import_undo($nid) {
+if (user_access('manage excel imports') ){
+$node=node_load($nid);
+foreach ($node->field_excelimportlistnids as $key=>$value) {
+ node_delete($value);
+ drupal_set_message("Node with nid:".$value." deleted!");
+}
+return "Node import undone";
+
+}
+}
+	function excel_import_theme() {
+	return array(
+'_excel_import_create_formats' => array(
+      //'template' => ''
+     'arguments' => array(
+		'form'=>NULL,
+	 )
+	),
+'excel_import_format_selectfileform'=>array(
+	'arguments' => array(
+	'form'=>NULL,
+	)),
+	'excel_import_manage_import'=>array(
+	'template'=>'excel_import_manage_import',
+	'arguments'=>array(
+	'form'=>NULL,'nid'=>NULL,
+	
+	),
+	
+	
+	),
+	'excel_import_import_form'=>array(
+	'arguments' => array(
+	'form'=>NULL,
+	)),
+	'excel_import_preview'=>array(
+	'arguments' => array(
+	'form'=>NULL,'form_state'=>NULL,
+	)),
+
+
+	
+		
+  );
+	}
+function theme__excel_import_create_formats($form) {
+	$row=array();
+	$headers=array();
+	$count=0;
+	$rows=array();
+	//print "<pre>".print_r($form)."</pre>";
+	foreach ($form as $i=>$values) {
+	//	print "<pre>".print_r($values)."</pre>";
+	if ((isset($values['#type']))&& is_array($values) ){
+
+	$headers[]=$values['#id'];
+	$row[]=	drupal_render($values);
+	$count++;
+	if ($count>3) {$rows[]=$row;$row=array();$count=0;}
+	//$row[]=	drupal_render($form[1]);
+	}
+
+	}
+	
+	$rows[]=$row;
+	$output = theme('table', $header, $rows);
+	  return $output;
+	}
+function theme_excel_import_format_selectfileform($form)  {
+    
+	$args=func_get_args();//check
+	$type=$form['type']['#value'];
+	////dsm("we entered ".$type);
+	$info = _content_type_info();
+	
+	if (!empty($info) ) {
+		$fields = $info['content types'][$type]['fields'];	 
+		$labels[]='<b>Select </b>';
+		$labels[]='<b>Field Names</b>';
+		foreach ($fields as $field_name=>$field_name_array) {
+			$field=content_fields($field_name,$type);
+			$labels[]=$field['widget']['label'];
+		}
+	   
+		$result = db_query("select id,type,mapping from {excel_import} where type='%s'",$type);
+	 $count=1;
+	 foreach (element_children($form['format']) as $key) {
+		  $radios[]=drupal_render($form['format'][$key]);
+	 }
+	 
+	 }
+	$count=0;
+	 while ($res=db_fetch_object($result)) {
+		$row=array();
+		$row[]='<b>Columns</b>';
+		$field_values=unserialize($res->mapping);
+		$row[]=$radios[$count];
+		$count++;
+		foreach ($fields as $field1=>$field1_array) {
+		$row[]=$field_values[$field1];
+		}
+		$rows[]=$row;
+	 
+	 }
+	 $output="Add excel file for content type ".$type;
+	 $output.=theme('table',$labels,$rows);
+	 $options['attributes']['rel']="automodal";
+	 $options['attributes']['class']="automodal";
+	 
+	 $output.= l('Create a new format','excel_import/add_format/'.$type,$options);
+	 $output.=drupal_render($form['field_excelimportfile']);
+	 $font_conv =drupal_render($form['font_conv']);//no longer required so render it but do not display
+	// print "<pre>".print_r($form)."</pre>";
+	 $output.=drupal_render($form['field_excelimportsheetno']);
+	 $output.=drupal_render($form['field_excelimportrows']);
+	 $output.=drupal_render($form);
+	 return $output;
+	}
+function excel_import_manage_imports($type) {
+$x="";
+//list all nodes of a particular type
+//$type='excel_import_task';
+$info = _content_type_info();
+$fields = $info['content types'][$type]['fields']; 
+//$result=db_query("select distinct nid from {node} where type='%s'",$type); 
+$view = views_get_view('excel_import_tasks');
+$args=array($type);
+$view->set_display('default');
+$view->pre_execute($args);
+$view->render();
+foreach ($view->result as $result) {
+$node=node_load($result->nid);
+//////dsm($node);
+}
+return views_embed_view('excel_import_tasks','default',$type);
+}	
+function excel_import_admin_imports() {
+$types = node_get_types();
+$header=array('Type','Add import formats','Add import file','Manage all imports');
+$options['attributes']['class']="none";
+		
+foreach ($types as $key=>$value){
+$row[]= $key;
+$row[]= l('Add import format','excel_import/add_format/'.$key,$options);
+$row[]= l('Add import file','excel_import/addexcelfile/'.$key,$options);
+$row[]= l('Manage imports','excel_import/manageimports/'.$key,$options);
+$rows[]=$row;
+$row=array();
+}
+return theme('table',$header,$rows);
+}
+
+function excel_import_import_form($form,$nid) {
+//generate form for import
+//on the top cloumns having form elements with all the labels of the fields to be imported
+//on the left checkboxes with row numbers
+//center the file
+//top
+$type='works';
+$maxrow=10;
+$maxcol=15;
+$info = _content_type_info();
+if (!empty($info) ) {
+	 $fields = $info['content types'][$type]['fields'];	 
+	 #$labels[]='<b>Select </b>';
+	 #$labels[]='<b>Field Names</b>';
+	 foreach ($fields as $field_name=>$field_name_array) {
+	  $field=content_fields($field_name,$type);
+	  $labels[]=$field['widget']['label'];
+	  $options[$field_name]=$field['widget']['label'];
+	  }
+}
+for ($i=0;$i<=$maxcol;$i++) {	  
+$form['fields']['field_'.$i]=array (
+ '#type'=>'select',
+ '#title'=>'Select fields',
+ '#options'=>$options,
+);
+}
+for ($i=0;$i<=$maxrow;$i++) {	  
+$options1[$i]='';
+}
+
+#for ($i=0;$i<=$maxrow;$i++) {	  
+
+$form['rows']=array(
+'#type'=>'checkboxes',
+'#options'=>$options1,
+);
+
+#}
+$form['#theme']='excel_import_import_form';
+$form['#nid']=$nid;
+return $form;
+}
+function theme_excel_import_import_form($form) {
+include_once (dirname(__FILE__) . "/unigateway/Encoder/transformer.php5");
+
+#////dsm($form);
+$nid=$form['#nid'];
+
+ $node=node_load($nid);
+ $excelfiles=$node->field_excelimportfile[0]['filepath'];
+$excelfiles=realpath(".")."/".$excelfiles;
+
+require_once 'excel_reader2.php';
+$data = new Spreadsheet_Excel_Reader($excelfiles);
+//return $data->dump();
+$t = new Transformer();
+$outstr="ftyk ;kstuk";
+$fontface="kruti dev 010";
+$row_begin=$node->field_excelrowbegin[0]['value'];
+$allrows=$node->field_excelimportrows[0]['value'];
+
+//new version 
+$matches=array();
+//////dsm($allrows);
+preg_match_all("/\,?(\d+)(\-(\d+))?/",$allrows,$matches,PREG_SET_ORDER);
+//////dsm($matches);
+//return "hi";
+$rownos=array();
+foreach ($matches as $match) {
+if(count($match) ==4) {//row1-row2
+  $row1= $match[1];
+  $row2=$match[3];
+  if ($row1>$row2) { $temp=$row2;$row2=$row1;$row1=$temp;} //swap
+  
+   for($i=$row1;$i<=$row2;$i++) {
+    //check if $i is already in array 
+	if (! in_array($i,$rownos) ) {
+	  $rownos[]=$i;
+	}
+   }
+}
+if (count($match)==2) {
+ if (!in_array($match[1],$rownos)) {
+   $rownos[]=$match[1];
+ }
+}
+
+}
+//////dsm($rownos);
+//return "hi";
+//new version
+$row_end=$node->field_rowend[0]['value'];
+$currentrow=$node->field_excelimportcurrentrow[0]['value'];
+$excelformat=unserialize($node->field_importmapping[0]['value']);
+//dpm($excelformat);
+$sheet_no=$node->field_excelimportsheetno[0]['value'];
+$status=$node->excelimportstatus[0]['value'];
+if ($status) { return "Import is already complete";};
+$types=$excelformat['type'];
+unset($excelformat['type']);
+
+$sheet_no=0;
+
+//for($i=$currentrow;$i<=$row_end;$i++) {
+for ($j=0;$j<=15;$j++) {
+$header[]=drupal_render($form['fields']['field_'.$j]);
+}
+foreach (element_children($form['rows']) as $key) {
+	$checkbox[]=drupal_render($form['rows'][$key]);
+}
+for($i=10;$i<=12;$i++) {
+ 
+ 
+//return $data->dump();
+$rows[]=$checkbox[$i];
+for ($j=0;$j<=10;$j++) {
+	$k=$data->val($i,$j,$sheet_no);
+	$font=$data->font($i,$j,$sheet_no);
+	if (strtolower($font)==$fontface) {
+		$k=$t->convert($k,$font);
+	}
+	$rows[]=$k;
+}
+#////////dsm($node);
+$rowss[]=$rows;
+$rows=array();
+}
+return theme('table',$header,$rowss);
+}
+function _excel_import_convertLatin1ToHtml($str) {
+
+    $html_entities = array (
+	
+"'"=>"&#039;",    #apostrophe 
+"&"=>"&amp;",    #ampersand
+"<"=>"&lt;",    #less-than
+">"=>"&gt;",    #greater-than
+"¨"=>"&uml;",    #spacing diaeresis
+"©"=>"&copy;",    #copyright
+"ª"=>"&ordf;",    #feminine ordinal indicator
+"«"=>"&laquo;",    #angle quotation mark (left)
+"¬"=>"&not;",    #negation
+"­"=>"&shy;",    #soft hyphen
+"®"=>"&reg;",    #registered trademark
+"¯"=>"&macr;",    #spacing macron
+"°"=>"&deg;",    #degree
+"±"=>"&plusmn;",    #plus-or-minus 
+"²"=>"&sup2;",    #superscript 2
+"³"=>"&sup3;",    #superscript 3
+"´"=>"&acute;",    #spacing acute
+"µ"=>"&micro;",    #micro
+"¶"=>"&para;",    #paragraph
+"·"=>"&middot;",    #middle dot
+"¸"=>"&cedil;",    #spacing cedilla
+"¹"=>"&sup1;",    #superscript 1
+"º"=>"&ordm;",    #masculine ordinal indicator
+"»"=>"&raquo;",    #angle quotation mark (right)
+"¼"=>"&frac14;",    #fraction 1/4
+"½"=>"&frac12;",    #fraction 1/2
+"¾"=>"&frac34;",    #fraction 3/4
+"¿"=>"&iquest;",    #inverted question mark
+"×"=>"&times;",    #multiplication
+"÷"=>"&divide;",    #division
+"Â"=>"&Acirc;",    #capital a, circumflex accent
+"Ã"=>"&Atilde;",    #capital a, tilde
+"Ä"=>"&Auml;",    #capital a, umlaut mark
+"Å"=>"&Aring;",    #capital a, ring
+"Æ"=>"&AElig;",    #capital ae
+"Ç"=>"&Ccedil;",    #capital c, cedilla
+"È"=>"&Egrave;",    #capital e, grave accent
+"É"=>"&Eacute;",    #capital e, acute accent
+"Ê"=>"&Ecirc;",    #capital e, circumflex accent
+"Ë"=>"&Euml;",    #capital e, umlaut mark
+"Ì"=>"&Igrave;",    #capital i, grave accent
+"Í"=>"&Iacute;",    #capital i, acute accent
+"Î"=>"&Icirc;",    #capital i, circumflex accent
+"Ï"=>"&Iuml;",    #capital i, umlaut mark
+"Ð"=>"&ETH;",    #capital eth, Icelandic
+"Ñ"=>"&Ntilde;",    #capital n, tilde
+"Ò"=>"&Ograve;",    #capital o, grave accent
+"Ó"=>"&Oacute;",    #capital o, acute accent
+"Ô"=>"&Ocirc;",    #capital o, circumflex accent
+"Õ"=>"&Otilde;",    #capital o, tilde
+"Ö"=>"&Ouml;",    #capital o, umlaut mark
+"Ø"=>"&Oslash;",    #capital o, slash
+"Ù"=>"&Ugrave;",    #capital u, grave accent
+"Ú"=>"&Uacute;",    #capital u, acute accent
+"Û"=>"&Ucirc;",    #capital u, circumflex accent
+"Ü"=>"&Uuml;",    #capital u, umlaut mark
+"Ý"=>"&Yacute;",    #capital y, acute accent
+"Þ"=>"&THORN;",    #capital THORN, Icelandic
+"ß"=>"&szlig;",    #small sharp s, German
+"à"=>"&agrave;",    #small a, grave accent
+"á"=>"&aacute;",    #small a, acute accent
+"â"=>"&acirc;",    #small a, circumflex accent
+"ã"=>"&atilde;",    #small a, tilde
+"ä"=>"&auml;",    #small a, umlaut mark
+"å"=>"&aring;",    #small a, ring
+"æ"=>"&aelig;",    #small ae
+"ç"=>"&ccedil;",    #small c, cedilla
+"è"=>"&egrave;",    #small e, grave accent
+"é"=>"&eacute;",    #small e, acute accent
+"ê"=>"&ecirc;",    #small e, circumflex accent
+"ë"=>"&euml;",    #small e, umlaut mark
+"ì"=>"&igrave;",    #small i, grave accent
+"í"=>"&iacute;",    #small i, acute accent
+"î"=>"&icirc;",    #small i, circumflex accent
+"ï"=>"&iuml;",    #small i, umlaut mark
+"ð"=>"&eth;",    #small eth, Icelandic
+"ñ"=>"&ntilde;",    #small n, tilde
+"ò"=>"&ograve;",    #small o, grave accent
+"ó"=>"&oacute;",    #small o, acute accent
+"ô"=>"&ocirc;",    #small o, circumflex accent
+"õ"=>"&otilde;",    #small o, tilde
+"ö"=>"&ouml;",    #small o, umlaut mark
+"ø"=>"&oslash;",    #small o, slash
+"ù"=>"&ugrave;",    #small u, grave accent
+"ú"=>"&uacute;",    #small u, acute accent
+"û"=>"&ucirc;",    #small u, circumflex accent
+"ü"=>"&uuml;",    #small u, umlaut mark
+"ý"=>"&yacute;",    #small y, acute accent
+"þ"=>"&thorn;",    #small thorn, Icelandic
+"ÿ"=>"&yuml;",    #small y, umlaut mark
+
+);
+/*
+		"&" =>  "&amp;",     #ampersand  
+        "á" =>  "&aacute;",     #latin small letter a
+        "Â" =>  "&Acirc;",     #latin capital letter A
+        "â" =>  "&acirc;",     #latin small letter a
+        "Æ" =>  "&AElig;",     #latin capital letter AE
+        "æ" =>  "&aelig;",     #latin small letter ae
+        "À" =>  "&Agrave;",     #latin capital letter A
+        "à" =>  "&agrave;",     #latin small letter a
+        "Å" =>  "&Aring;",     #latin capital letter A
+        "å" =>  "&aring;",     #latin small letter a
+        "Ã" =>  "&Atilde;",     #latin capital letter A
+        "ã" =>  "&atilde;",     #latin small letter a
+        "Ä" =>  "&Auml;",     #latin capital letter A
+        "ä" =>  "&auml;",     #latin small letter a
+        "Ç" =>  "&Ccedil;",     #latin capital letter C
+        "ç" =>  "&ccedil;",     #latin small letter c
+        "É" =>  "&Eacute;",     #latin capital letter E
+        "é" =>  "&eacute;",     #latin small letter e
+        "Ê" =>  "&Ecirc;",     #latin capital letter E
+        "ê" =>  "&ecirc;",     #latin small letter e
+        "È" =>  "&Egrave;",     #latin capital letter E
+		*/
+/*... sorry cutting because limitation of php.net ...
+... but the principle is it ;) ... */
+/*
+        "û" =>  "&ucirc;",     #latin small letter u
+        "Ù" =>  "&Ugrave;",     #latin capital letter U
+        "ù" =>  "&ugrave;",     #latin small letter u
+        "Ü" =>  "&Uuml;",     #latin capital letter U
+        "ü" =>  "&uuml;",     #latin small letter u
+        "Ý" =>  "&Yacute;",     #latin capital letter Y
+        "ý" =>  "&yacute;",     #latin small letter y
+        "ÿ" =>  "&yuml;",     #latin small letter y
+        "Ÿ" =>  "&Yuml;",     #latin capital letter Y
+    );
+	*/
+
+    foreach ($html_entities as $key => $value) {
+        $str = str_replace($value, $key, $str);
+    }
+    return $str;
+} 
+function excel_import_multiple_sheets_form(&$form_state,$nid) {
+#debug
+//module_load_include('inc', 'node_import', 'node_import');
+
+//////dsm(node_import_list_files());
+//return "hi";
+#debug
+if (!user_access('manage excel imports')) {
+ return 'You cannot import from excel files';
+}
+include_once (dirname(__FILE__) . "/unigateway/Encoder/transformer.php5");
+$node=node_load($nid);
+$excelfiles=$node->field_excelimportfile[0]['filepath'];
+$excelfiles=realpath(".")."/".$excelfiles;
+
+require_once 'excel_reader2.php';
+$data = new Spreadsheet_Excel_Reader($excelfiles);
+
+$t = new Transformer();
+$outstr="ftyk ;kstuk";
+$fontface="kruti dev 010";
+
+//$outstr = $t->convert($outstr, $fontface);
+ 
+
+
+
+
+$allrows=$node->field_excelimportrows[0]['value'];
+$excelformat=unserialize($node->field_importmapping[0]['value']);
+//dpm($excelformat);
+#$sheet_no=$node->field_excelimportsheetno[0]['value'];
+$status=$node->excelimportstatus[0]['value'];
+if ($status) { return "Import is already complete";};
+$types=$excelformat['type'];
+unset($excelformat['type']);
+$header[]='Sheet No';
+$header[]='Row No';
+foreach ($excelformat as $key=>$value) {
+$header[]=$key;
+}
+if (!isset($form_state['storage']['rownos'])){
+//new version 
+$matches=array();
+//////dsm($allrows);
+preg_match_all("/(\d+):((\d+(\-(\d+))?)\,?)+;/",$allrows,$matches);
+//////dsm($matches);
+foreach ($matches[0] as $key=>$value) {
+ preg_match_all("/\,?(\d+)(\-(\d+))?[^:]/",$value,$matches1,PREG_SET_ORDER);
+ $sheet_no=$matches[1][$key];
+ //////dsm($matches1);
+
+$rownos=array();
+foreach ($matches1 as $match) {
+if(count($match) ==4) {//row1-row2
+  $row1= $match[1];
+  $row2=$match[3];
+  if ($row1>$row2) { $temp=$row2;$row2=$row1;$row1=$temp;} //swap
+  
+  $rownos=array('rowbegin'=>$row1,'rowend'=>$row2);
+  ////dsm($rownos);
+  /*
+   for($i=$row1;$i<=$row2;$i++) {
+    //check if $i is already in array 
+	if (! in_array($i,$rownos) ) {
+	  $rownos[]=$i;
+	 //$rownos[]=array('sheet'=>$sheet_no,'rowno'=>$i);
+	}
+   }
+   */
+   
+}
+if (count($match)==2) {
+ //if (!in_array($match[1],$rownos)) {
+   //$rownos[]=$match[1];
+   $rownos[]=array('rowbegin'=>$match[1],'rowend'=>$match[1]);
+   //$rownos[]=array('sheet'=>$sheet_no,'rowno'=>$match[1]);
+ //}
+}
+//////dsm($rownos);
+$form_state['storage']['rownos'][$sheet_no][]=$rownos;
+$rownos=array();
+}
+
+}
+
+
+}
+//////dsm($form_state['storage']['rownos']);
+#$currentrow=$node->field_excelimportcurrentrow[0]['value'];
+
+//for($i=$currentrow;$i<=$row_end;$i++) {
+#unset($rownos[0]);
+//
+
+//
+$no_of_sheets=count($form_state['storage']['rownos']);
+$sheets=array_keys($form_state['storage']['rownos']);
+$index1=1;
+$sheetindex=0;
+$sheetentryindex=0;
+$flag=0;
+$rows=array();
+while (($index1<=50) && ($flag==0)) {
+$sheet_no=$sheets[$sheetindex];
+$row_begin=$node->field_excelimportcurrentrow[$sheet_no]['value']+1;
+ $rowbegin=$form_state['storage']['rownos'][$sheet_no][$sheetentryindex]['rowbegin'];
+ if ($row_begin > $rowbegin) {
+ drupal_set_message("initial row changed from ".$rowbegin."  to ".$row_begin);
+ $rowbegin=$form_state['storage']['rownos'][$sheet_no][$sheetentryindex]['rowbegin']=$row_begin;
+ 
+ }
+ //////dsm($rowbegin);
+ $rowend=$form_state['storage']['rownos'][$sheet_no][$sheetentryindex]['rowend'];
+ ////dsm($rowbegin.".".$rowend);
+ if ($rowbegin>$rowend){
+ 
+ if (isset($form_state['storage']['rownos'][$sheet_no][$sheetentryindex+1])){
+	$sheetentryindex++;
+   } elseif ($sheetindex!=$no_of_sheets-1){
+     $sheetindex++;
+   } else {
+     $flag=1;//we are done
+   }
+ } else{
+  
+$index1++;
+//$rowarray=array_shift($form_state['storage']['rownos']);
+ //$sheet_no=$rowarray['sheet'];
+ //$i=$rowarray['rowno'];
+ 
+ 
+ $i=$form_state['storage']['rownos'][$sheet_no][$sheetentryindex]['rowbegin'];
+ $form_state['storage']['rownos'][$sheet_no][$sheetentryindex]['rowbegin'] +=1;
+ //$i=array_shift($form_state['storage']['rownos'][$sheet_no]);
+ $rows[]=$sheet_no;
+//return $data->dump();
+$rows[]=$i;
+foreach ($excelformat as $key=>$value) {
+	if (is_numeric($value)) {
+		$k=$data->val($i,$value,$sheet_no);
+		
+		if (($k=="'")||($k=="")) { }
+					else { 
+						
+						$k = htmlentities($k,ENT_NOQUOTES);
+						//print "<b>".$k."</b><br>";
+						$k=_excel_import_convertLatin1ToHtml($k);
+						//print "<b>".$k."</b><br>";
+						//$k=encode($k,"UTF-8");
+						//mb_convert_encoding($k,"ISO-8859-15");
+						//$k=bin2hex($k);
+						/*
+						$link = $data->hyperlink($i,$value,$sheet_no);
+						if ($link!='') {
+							$k = "<a href=\"$link\">$k</a>";
+						}
+						*/
+						//$k=convert_uudecode($k);
+					//////dsm($k);
+			//$k=nl2br($k);
+
+						}
+				//////dsm($data->val($i,$value,$sheet_no));
+		} 
+	else {
+		$k=$value;
+	}
+	$font=$data->font($i,$value,$sheet_no);//debug
+	//$font="kruti dev 011";
+	if (strtolower($font)==$fontface) {
+		$k=$t->convert($k,$font);
+	}
+	$rows[]=$k;
+	
+}
+#////////dsm($node);
+$rowss[]=$rows;
+$rows=array();
+$importedrows[]=$sheet_no.":".$i;
+
+ }
+ }
+ 
+
+
+//dpm($j);
+#$x="<b>hi</b>";
+#print theme('page',$x);
+
+#$output.=theme('table',$header,$rowss);
+$form_state['storage'] = isset($form_state['storage']) ? $form_state['storage'] : array();
+  $form_state['values'] = isset($form_state['values']) ? $form_state['values'] : array();
+  $values = array_merge($form_state['storage'], $form_state['values']);
+$form_state['storage']['preview']=$rowss;
+$form_state['storage']['header']=$header;
+#$form_state['storage']['importedrows']=$importedrows;
+$form_state['storage']['excel_import_task']=$node;
+
+//////dsm($form_state['storage']);
+//////dsm($form_state['values']);
+
+$form=array();
+$form['submit']=array(
+'#type'=>'submit',
+'#value'=>'submit',
+'#submit'=>array('excel_import_multiple_sheets_form_withintelligence_submit'),
+);
+/*
+$form['next']=array(
+'#type'=>'submit',
+'#value'=>'Next',
+'#submit'=>array('excel_import_multiple_sheets_form_next_submit'),
+);
+*/
+$form['#theme']='excel_import_preview';
+$form['#preview']=$rowss;
+$form['#headers']=$header;
+//$form['#id']='excel_import_multiple_sheets_form_withintelligence';
+//////dsm($form_state);
+//////dsm($form);
+return $form;
+}
+function excel_import_multiple_sheets_form_next_submit($form,&$form_state) {
+//////dsm($form_state);
+
+$form_state['rebuild']=TRUE;
+$form_state['storage']['preview']=NULL;
+}
+function excel_import_multiple_sheets_form_withintelligence_submit($form,&$form_state) {
+ $excel_import_task=$form_state['storage']['excel_import_task'];
+  global $user;
+  $nodecount=1;
+ foreach ($form_state['storage']['preview'] as $key=>$value) {
+	 $worksnode=new stdClass();
+	 $worksnode->type=$excel_import_task->field_type[0]['value'];
+	 global $user;
+	 $worksnode->uid=$user->uid;
+	 
+	  
+  foreach ($value as $fieldindex=>$fieldvalue) {
+  if ($fieldindex==0) {$sheetno=$fieldvalue;continue;}
+  if ($fieldindex==1) {$rowno=$fieldvalue;continue;}
+	$field=$form_state['storage']['header'][$fieldindex];
+	
+  	$worksnode->$field=array(array('value'=>$fieldvalue));
+  }
+//  ////dsm($worksnode);
+
+$panchayat=$worksnode->field_workspanchayat[0]['value'];
+$block=$worksnode->field_worksblock[0]['value'];
+$revvillage=$worksnode->field_worksrevvill[0]['value'];
+$tehsil=$worksnode->field_workstehsil[0]['value'];
+$dept=$worksnode->field_worksdept[0]['value'];
+$scheme=$worksnode->field_worksscheme[0]['value'];
+//check if panchayat/ block exists
+//////dsm("Trying to match block".$block." Panchayat:".$panchayat);
+		$results=db_query("SELECT node.nid AS nid,
+   node_data_field_block.field_block_value AS node_data_field_block_field_block_value,
+   node.type AS node_type,
+   node.vid AS node_vid,
+   node_data_field_block.field_panchayat_value AS node_data_field_block_field_panchayat_value,
+   node.uid AS node_uid,
+   node_revisions.format AS node_revisions_format
+ FROM node node 
+ LEFT JOIN content_type_panchayats node_data_field_block ON node.vid = node_data_field_block.vid
+ LEFT JOIN node_revisions node_revisions ON node.vid = node_revisions.vid
+ WHERE (node.type in ('panchayats')) AND (node_data_field_block.field_panchayat_value = '%s') 
+ AND (node_data_field_block.field_block_value = '%s')",$panchayat,$block);
+ $count=0;$nidtemp=$nidtemp1=NULL;
+ while ($result=db_fetch_object($results)) {
+	$count+=1;
+	//dd($block."-".$panchayat." vs ".$result->node_data_field_block_field_block_value."-".$result->node_data_field_block_field_panchayat_value);
+	$nidtemp=$result->nid;
+ }
+ if ($count!=1) {
+   //dd(" Error ...".$count);
+   $panchayatpart=mb_substr($panchayat,0,2);
+   //dd($panchayatpart);
+   $panchayatlast=mb_substr($panchayat,mb_strlen($panchayat)-2,2);
+   //dd("last part=".$panchayatlast);
+   $results1=db_query("SELECT node.nid AS nid,
+   node_data_field_block.field_block_value AS node_data_field_block_field_block_value,
+   node.type AS node_type,
+   node.vid AS node_vid,
+   node_data_field_block.field_panchayat_value AS node_data_field_block_field_panchayat_value,
+   node.uid AS node_uid,
+   node_revisions.format AS node_revisions_format
+ FROM node node 
+ LEFT JOIN content_type_panchayats node_data_field_block ON node.vid = node_data_field_block.vid
+ LEFT JOIN node_revisions node_revisions ON node.vid = node_revisions.vid
+ WHERE (node.type in ('panchayats')) AND (node_data_field_block.field_panchayat_value like '%s%') AND (node_data_field_block.field_panchayat_value like '%%%s')",$panchayatpart,$panchayatlast);
+ //////dsm("likely matches are :");
+ //dd("likely matches are :");
+ $count1=0;
+ while ($result1=db_fetch_object($results1)) {
+	$count1+=1;
+	//////dsm($block."-".$panchayat." vs ".$result1->node_data_field_block_field_panchayat_value." ".$result1->node_data_field_block_field_block_value);
+	//dd($block."-".$panchayat." vs ".$result1->node_data_field_block_field_panchayat_value." ".$result1->node_data_field_block_field_block_value);
+	$nidtemp1=$result1->nid;
+ }
+ if ($count1==1) {
+  //dd('hit nid='.$nidtemp1);
+  $worksnode->field_workspanchayatref[0]['nid']=$nidtemp1;
+ } else {
+  //dd($sheetno.":".$rowno."-"."(Panchayat:".$block."--".$panchayat." )");
+ }
+   
+ } else {
+ $worksnode->field_workspanchayatref[0]['nid']=$nidtemp;
+   //dd("hit nid=".$nidtemp);
+ }
+ //check for revenue village/tehsil
+ 
+ 		$results2=db_query("SELECT node.nid AS nid, node_data_field_revvillage.field_tehsil_value AS 
+		node_data_field_revvillage_field_tehsil_value, node.type AS node_type, node.vid AS node_vid, 
+		node_data_field_revvillage.field_revvillage_value AS node_data_field_revvillage_field_revvillage_value,
+ node.uid AS node_uid, node_revisions.format AS node_revisions_format, node.title AS node_title FROM node node 
+ LEFT JOIN content_type_revvillage node_data_field_revvillage ON node.vid = node_data_field_revvillage.vid 
+ LEFT JOIN node_revisions node_revisions ON node.vid = node_revisions.vid 
+		WHERE (node.type in ('revvillage')) AND (node_data_field_revvillage.field_revvillage_value = '%s') AND 
+		(node_data_field_revvillage.field_tehsil_value = '%s')",$revvillage,$tehsil);
+ $count=0;$nidtemp=$nidtemp1=NULL;
+ while ($result2=db_fetch_object($results2)) {
+	$count+=1;
+	//dd($block."-".$panchayat." vs ".$result->node_data_field_block_field_block_value."-".$result->node_data_field_block_field_panchayat_value);
+	$nidtemp=$result2->nid;
+ }
+ if ($count!=1) {
+   //dd(" Error ...".$count);
+   $revvillagepart=mb_substr($revvillage,0,2);
+   //dd($panchayatpart);
+   $revvillagelast=mb_substr($revvillage,mb_strlen($revvillage)-1,1);
+   //dd("last part=".$panchayatlast);
+   $results3=db_query("SELECT node.nid AS nid, node_data_field_revvillage.field_tehsil_value AS 
+		node_data_field_revvillage_field_tehsil_value, node.type AS node_type, node.vid AS node_vid, 
+		node_data_field_revvillage.field_revvillage_value AS node_data_field_revvillage_field_revvillage_value,
+ node.uid AS node_uid, node_revisions.format AS node_revisions_format, node.title AS node_title FROM node node 
+ LEFT JOIN content_type_revvillage node_data_field_revvillage ON node.vid = node_data_field_revvillage.vid 
+ LEFT JOIN node_revisions node_revisions ON node.vid = node_revisions.vid 
+		WHERE (node.type in ('revvillage')) AND (node_data_field_revvillage.field_revvillage_value like '%s%') AND 
+		(node_data_field_revvillage.field_revvillage_value = '%%%s')",$revvillagepart,$revvillagelast);
+ //////dsm("likely matches are :");
+ //dd("likely matches are :");
+ $count1=0;
+ while ($result3=db_fetch_object($results3)) {
+	$count1+=1;
+	//////dsm($block."-".$panchayat." vs ".$result1->node_data_field_block_field_panchayat_value." ".$result1->node_data_field_block_field_block_value);
+	//dd($block."-".$panchayat." vs ".$result1->node_data_field_block_field_panchayat_value." ".$result1->node_data_field_block_field_block_value);
+	$nidtemp1=$result3->nid;
+ }
+ if ($count1==1) {
+  //dd('hit nid='.$nidtemp1);
+  $worksnode->field_worksrevvillref[0]['nid']=$nidtemp1;
+ } else {
+  //dd($sheetno.":".$rowno."-"."(Rev.village:".$tehsil."--".$revvillage.")..");
+ }
+   
+ } else {
+  $worksnode->field_worksrevvillref[0]['nid']=$nidtemp;
+   //dd("hit nid=".$nidtemp);
+ }
+ 
+ 
+ //for scheme 
+ 		$results2=db_query("SELECT node.nid AS nid,
+   node.title AS node_title,
+   
+   node_data_field_scheme.field_scheme_value AS node_data_field_scheme_field_scheme_value,
+   node.uid AS node_uid,
+   node_revisions.format AS node_revisions_format
+ FROM node node 
+ 
+ LEFT JOIN content_type_schemes node_data_field_scheme ON node.vid = node_data_field_scheme.vid
+ LEFT JOIN node_revisions node_revisions ON node.vid = node_revisions.vid
+ WHERE (node.type in ('schemes'))  AND (node_data_field_scheme.field_scheme_value = '%s')",$scheme);
+ $count=0;$nidtemp=$nidtemp1=NULL;
+ while ($result2=db_fetch_object($results2)) {
+	$count+=1;
+	//dd($block."-".$panchayat." vs ".$result->node_data_field_block_field_block_value."-".$result->node_data_field_block_field_panchayat_value);
+	$nidtemp=$result2->nid;
+ }
+ if ($count!=1) {
+   //dd(" Error ...".$count);
+   
+  //dd($sheetno.":".$rowno."-"."(Scheme:".$scheme.")");
+ 
+   
+ } else {
+  $worksnode->field_worksschemeref[0]['nid']=$nidtemp;
+   //dd("hit nid=".$nidtemp);
+ }
+ 
+ 
+ //for dept
+ 
+ 		$results2=db_query("SELECT node.nid AS nid,
+   node_data_field_deptname.field_deptname_value AS node_data_field_deptname_field_deptname_value,
+   node.type AS node_type,
+   node.vid AS node_vid
+ FROM node node 
+ LEFT JOIN content_type_department node_data_field_deptname ON node.vid = node_data_field_deptname.vid
+ WHERE (node.type in ('department')) AND (node_data_field_deptname.field_deptname_value = '%s')",$dept);
+ $count=0;$nidtemp=$nidtemp1=NULL;
+ while ($result2=db_fetch_object($results2)) {
+	$count+=1;
+	//dd($block."-".$panchayat." vs ".$result->node_data_field_block_field_block_value."-".$result->node_data_field_block_field_panchayat_value);
+	$nidtemp=$result2->nid;
+ }
+ if ($count!=1) {
+   //dd(" Error ...".$count);
+   
+ // dd($sheetno.":".$rowno."-"."(Dept:".$dept.")");
+ }
+   
+  else {
+  $worksnode->field_worksagency[0]['nid']=$nidtemp;
+   //////dsm("hit nid=".$nidtemp);
+ }
+ 
+ 
+  node_validate($worksnode);
+  if (!($errors=form_get_errors())) {
+	//$importednode=node_submit($worksnode);
+	node_save($worksnode);
+	$nodecount++;
+	//////dsm($worksnode);
+  }
+   if ($worksnode->nid){
+	//drupal_set_message(l("Node with nid:".$worksnode->nid." created.",'node/'.$worksnode->nid));
+	/*
+	if ($excel_import_task->field_excelimportlistnids[0]['value']) {
+		$excel_import_task->field_excelimportlistnids[0]['value'] .= ",".$worksnode->nid;
+	}
+	else {
+	$excel_import_task->field_excelimportlistnids[0]['value']=$worksnode->nid;
+	}
+	*/
+	$excel_import_task->field_excelimportcurrentrow[$sheetno]['value']=$rowno;
+  }
+	
+  
+  }
+
+ //$excel_import_task->field_excelimportstatus[0]['value']=1;
+ //$excel_import_task->field_excelimportcurrentrow[0]['value']=$rowno;
+node_save($excel_import_task);
+//dsm($excel_import_task);
+$nodecount--;
+drupal_set_message($nodecount." no of nodes of type ".$worksnode->type." created. last nid is ".l($worksnode->nid,'node/'.$worksnode->nid));
+$form_state['rebuild']=TRUE;
+ if (empty($form_state['storage']['rownos'])){
+ drupal_goto('excel_import/manageimports/'.$worksnode->type);
+ }
+ 
+ }
